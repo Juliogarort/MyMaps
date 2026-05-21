@@ -96,19 +96,6 @@ Abre el navegador en: `http://localhost:5173`
 
 ---
 
-## Scripts de prueba del backend
-
-```bash
-python probar_clima.py          # Prueba la API del tiempo
-python probar_dgt.py            # Prueba la API de la DGT
-python probar_geocodificador.py # Prueba el geocodificador
-python probar_reglas.py         # Prueba el sistema de reglas
-python probar_tsp.py            # Prueba el algoritmo TSP
-python calcular.py              # Calcula rutas por consola
-```
-
----
-
 ## Estructura del proyecto
 
 ```
@@ -117,14 +104,10 @@ MyMaps/
 ├── calcular.py                # Script de rutas por consola
 ├── requirements.txt           # Dependencias Python
 ├── .env.example               # Plantilla de variables de entorno
-├── probar_clima.py
-├── probar_dgt.py
-├── probar_geocodificador.py
-├── probar_reglas.py
-├── probar_tsp.py
 ├── apis/
 │   ├── clima.py               # Conexión OpenWeatherMap
 │   ├── dgt.py                 # Conexión API DGT
+│   ├── doverpass.py           # Conexión incidentes sevilla centro
 │   └── geocodificador.py      # Conversión dirección → coordenadas
 ├── sevilla/
 │   ├── reglas.py              # Reglas de penalización
