@@ -101,3 +101,26 @@ def direccion_a_coordenadas(texto: str) -> dict | None:
         return None
 
     return resultados[0]
+
+
+def coordenadas_a_direccion(lat: float, lng: float) -> str | None:
+    """Convierte coordenadas a nombre de lugar/dirección en Sevilla."""
+    try:
+        respuesta = httpx.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "lat": lat,
+                "lon": lng,
+                "format": "json",
+                "addressdetails": 1
+            },
+            headers=CABECERAS,
+            timeout=8.0
+        )
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        time.sleep(1)
+        return datos.get("display_name")
+    except Exception as e:
+        print(f"[Geocodificador] ❌ Error reverse: {e}")
+        return None

@@ -25,8 +25,12 @@ NS = {
     "sse": "http://levelC/schema/3/situationSpanishExtension",
 }
 
-# Provincia de Sevilla para filtrar
-PROVINCIA_SEVILLA = "Sevilla"
+# Provincia de Sevilla para filtrar (comparación case-insensitive)
+PROVINCIA_SEVILLA = "sevilla"
+
+# Bounding box de la provincia de Sevilla como fallback
+SEVILLA_LAT_MIN, SEVILLA_LAT_MAX = 36.8, 38.1
+SEVILLA_LNG_MIN, SEVILLA_LNG_MAX = -7.0, -4.8
 
 # Tipos de causa del XML mapeados a nuestro formato
 TIPOS_CAUSA = {
@@ -72,11 +76,24 @@ def obtener_incidencias_sevilla() -> list:
 
     for situacion in situaciones:
         incidencia = _parsear_situacion(situacion)
-        if incidencia and incidencia["provincia"] == PROVINCIA_SEVILLA:
+        if incidencia and _es_de_sevilla(incidencia):
             incidencias_sevilla.append(incidencia)
 
     print(f"[DGT] Incidencias en Sevilla: {len(incidencias_sevilla)}")
     return incidencias_sevilla
+
+
+def _es_de_sevilla(inc: dict) -> bool:
+    """Devuelve True si la incidencia pertenece a la provincia de Sevilla.
+    Usa comparación case-insensitive y un fallback por bounding box.
+    """
+    provincia = inc.get("provincia", "").lower().strip()
+    if PROVINCIA_SEVILLA in provincia:
+        return True
+    # Fallback: coordenadas dentro de la provincia
+    lat, lng = inc.get("lat", 0), inc.get("lng", 0)
+    return (SEVILLA_LAT_MIN <= lat <= SEVILLA_LAT_MAX and
+            SEVILLA_LNG_MIN <= lng <= SEVILLA_LNG_MAX)
 
 
 def _parsear_situacion(situacion) -> Optional[dict]:
