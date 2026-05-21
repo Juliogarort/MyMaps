@@ -20,6 +20,7 @@ from typing import List
 
 from apis.geocodificador import direccion_a_coordenadas
 from apis.dgt import obtener_incidencias_sevilla
+from apis.overpass import obtener_incidencias_overpass
 from apis.clima import obtener_clima_sevilla
 from sevilla.tsp import calcular_ruta_optima
 from sevilla.reglas import calcular_distancia, calcular_penalizacion_dgt, calcular_penalizacion_clima
@@ -30,7 +31,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Permitir peticiones desde el frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -53,6 +53,93 @@ class PeticionRuta(BaseModel):
     paradas: List[Parada]
 
 
+# ── Combinar incidencias de todas las fuentes ────────────────
+
+def obtener_todas_incidencias() -> list:
+    """
+    Combina incidencias de la DGT (carreteras) y Overpass (calles urbanas).
+    """
+    incidencias_dgt      = obtener_incidencias_sevilla()
+    incidencias_overpass = obtener_incidencias_overpass()
+    todas = incidencias_dgt + incidencias_overpass
+    print(f"[Incidencias] DGT: {len(incidencias_dgt)} | Overpass: {len(incidencias_overpass)} | Total: {len(todas)}")
+    return todas
+
+
+# ── Justificación en lenguaje humano ─────────────────────────
+
+def generar_justificacion(ruta: list, incidencias: list, clima: dict) -> str:
+    """
+    Genera un mensaje simple y entendible explicando las decisiones de la ruta.
+    """
+    mensajes = []
+    factor_clima = calcular_penalizacion_clima(clima)
+
+    # Mensaje sobre el clima
+    condicion = clima.get("condicion", "normal")
+    if condicion == "tormenta":
+        mensajes.append(f"⛈️ Hay tormenta en Sevilla. Se ha aumentado la precaución en todos los tramos.")
+    elif condicion == "lluvia":
+        mensajes.append(f"🌧️ Está lloviendo en Sevilla. Se ha tenido en cuenta para el cálculo.")
+
+    # Analizar cada tramo de la ruta
+    tramos_con_incidencias = []
+    for i in range(len(ruta) - 1):
+        p1, p2 = ruta[i], ruta[i + 1]
+        penalizacion = calcular_penalizacion_dgt(p1, p2, incidencias)
+
+        if penalizacion > 1.0:
+            # Buscar qué incidencias afectan a este tramo
+            medio = {
+                "lat": (p1["lat"] + p2["lat"]) / 2,
+                "lng": (p1["lng"] + p2["lng"]) / 2
+            }
+            incidencias_cercanas = []
+            for inc in incidencias:
+                punto_inc = {"lat": inc["lat"], "lng": inc["lng"]}
+                if calcular_distancia(medio, punto_inc) < 5:
+                    incidencias_cercanas.append(inc)
+
+            if incidencias_cercanas:
+                nombres_paradas = f"{p1['nombre']} y {p2['nombre']}"
+                tipos = list(set([inc.get("tipo", "incidencia") for inc in incidencias_cercanas]))
+                tipo_texto = _tipo_a_texto(tipos[0]) if tipos else "una incidencia"
+                carretera = incidencias_cercanas[0].get("carretera", "")
+                if carretera and carretera != "Calle sin nombre":
+                    tramos_con_incidencias.append(
+                        f"⚠️ Entre {nombres_paradas} se detectó {tipo_texto} en {carretera}. "
+                        f"Se ajustó el coste del tramo para optimizar la ruta."
+                    )
+                else:
+                    tramos_con_incidencias.append(
+                        f"⚠️ Entre {nombres_paradas} se detectó {tipo_texto}. "
+                        f"Se ajustó el coste del tramo para optimizar la ruta."
+                    )
+
+    if tramos_con_incidencias:
+        mensajes.extend(tramos_con_incidencias)
+    else:
+        mensajes.append("✅ No se detectaron incidencias en ningún tramo de la ruta.")
+
+    # Mensaje final con el orden elegido
+    nombres_orden = " → ".join([p["nombre"] for p in ruta])
+    mensajes.append(f"🗺️ Orden óptimo calculado: {nombres_orden}")
+
+    return "\n".join(mensajes)
+
+
+def _tipo_a_texto(tipo: str) -> str:
+    """Convierte el tipo de incidencia a texto legible."""
+    textos = {
+        "obras":      "obras en la vía",
+        "accidente":  "un accidente",
+        "corte":      "un corte de tráfico",
+        "congestion": "congestión de tráfico",
+        "otros":      "una incidencia de tráfico"
+    }
+    return textos.get(tipo, "una incidencia")
+
+
 # ── Endpoints ────────────────────────────────────────────────
 
 @app.get("/estado")
@@ -69,8 +156,8 @@ def clima():
 
 @app.get("/incidencias")
 def incidencias():
-    """Devuelve las incidencias de tráfico activas en Sevilla."""
-    return obtener_incidencias_sevilla()
+    """Devuelve las incidencias de tráfico activas en Sevilla (DGT + Overpass)."""
+    return obtener_todas_incidencias()
 
 
 @app.get("/geocodificar")
@@ -81,6 +168,7 @@ def geocodificar(direccion: str):
         raise HTTPException(status_code=404, detail="Dirección no encontrada en Sevilla")
     return resultado
 
+
 @app.get("/reversa")
 def reversa(lat: float, lng: float):
     from apis.geocodificador import coordenadas_a_direccion
@@ -89,24 +177,12 @@ def reversa(lat: float, lng: float):
         raise HTTPException(status_code=404, detail="No se encontró dirección")
     return {"direccion": direccion}
 
+
 @app.post("/ruta")
 def calcular_ruta(peticion: PeticionRuta):
     """
-    Calcula la ruta óptima de reparto.
-
-    Recibe:
-        - almacen: punto de salida y regreso
-        - paradas: lista de direcciones de entrega
-
-    Devuelve:
-        - ruta_ordenada: paradas en orden óptimo
-        - coste_total:   coste total del recorrido
-        - distancias:    detalle de cada tramo
-        - clima:         condiciones meteorológicas
-        - incidencias:   incidencias activas
+    Calcula la ruta óptima de reparto combinando datos de DGT, Overpass y clima.
     """
-
-    # Construir puntos directamente desde la petición
     punto_almacen = {
         "nombre": peticion.almacen.nombre,
         "lat":    peticion.almacen.lat,
@@ -114,8 +190,6 @@ def calcular_ruta(peticion: PeticionRuta):
     }
 
     puntos = [punto_almacen]
-    no_encontradas = []
-
     for parada in peticion.paradas:
         puntos.append({
             "nombre": parada.nombre,
@@ -129,80 +203,31 @@ def calcular_ruta(peticion: PeticionRuta):
             detail="Se requiere el almacén y al menos una parada"
         )
 
-    # Datos en tiempo real
-    incidencias_activas = obtener_incidencias_sevilla()
+    # Datos en tiempo real — DGT + Overpass + clima
+    incidencias_activas = obtener_todas_incidencias()
     clima_actual        = obtener_clima_sevilla()
 
     # Calcular ruta óptima
     resultado = calcular_ruta_optima(puntos, incidencias_activas, clima_actual)
 
-    # Generar justificación real tramo a tramo
+    # Justificación en lenguaje humano
     ruta = resultado.get("ruta_ordenada", [])
-    n_paradas = len(ruta) - 2
-    coste = resultado.get("coste_total", 0)
-    factor_clima = calcular_penalizacion_clima(clima_actual)
+    justificacion = generar_justificacion(ruta, incidencias_activas, clima_actual)
 
-    lineas = ["% === Análisis de la decisión de ruta ===", ""]
-
-    # Clima
-    if factor_clima > 1.0:
-        condicion = clima_actual.get("condicion", "adverso")
-        lineas.append(f"% ⚠️  Clima adverso: {condicion} → penalización x{factor_clima:.1f} en todos los tramos")
-    else:
-        temp = clima_actual.get("temperatura", "?")
-        lineas.append(f"% ✅ Clima: despejado ({temp}°C), sin penalización por clima")
-
-    lineas.append("")
-    lineas.append("% Desglose de tramos (distancia, penalizaciones, coste efectivo):")
-
-    tramos_penalizados = []
-    for i in range(len(ruta) - 1):
-        p1, p2 = ruta[i], ruta[i + 1]
-        dist = calcular_distancia(p1, p2)
-        pen = calcular_penalizacion_dgt(p1, p2, incidencias_activas)
-        coste_tramo = dist * pen * factor_clima
-        penalizado = pen > 1.0
-        if penalizado:
-            tramos_penalizados.append((p1["nombre"], p2["nombre"], pen, dist))
-        icono = "⚠️ " if penalizado else "✅"
-        detalle = f"incidencias cerca → coste x{pen:.2f}" if penalizado else "sin incidencias"
-        lineas.append(
-            f"%   {icono} {p1['nombre']} → {p2['nombre']}: "
-            f"{dist:.2f}km | {detalle} | coste efectivo: {coste_tramo:.2f}km"
-        )
-
-    lineas.append("")
-    lineas.append("% Decisión del algoritmo OR-Tools (TSP PATH_CHEAPEST_ARC):")
-    if tramos_penalizados:
-        penalizados_str = ", ".join([f"{a}→{b} (x{p:.2f})" for a, b, p, _ in tramos_penalizados])
-        lineas.append(f"%   Tramos penalizados por incidencias: {penalizados_str}")
-        lineas.append(
-            f"%   El algoritmo asignó mayor coste a esos tramos para priorizar"
-            f" rutas alternativas con menos carga de tráfico."
-        )
-    else:
-        lineas.append("%   Ningún tramo afectado por incidencias. Orden elegido solo por distancia mínima.")
-
-    orden = " → ".join([p["nombre"] for p in ruta])
-    lineas.append(f"%   Orden óptimo final: {orden}")
-    lineas.append(f"%   Coste total ponderado: {coste:.2f} km equivalentes")
-
-    justificacion = "\n".join(lineas)
-
-    # Guardar en CSV
+    # Guardar CSV
     try:
         import csv
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         with open(f"ruta_{timestamp}.csv", mode="w", newline="", encoding="utf-8") as f:
             escritor = csv.writer(f)
-            escritor.writerow(["Orden", "Nombre", "Latitud", "Longitud", "Direccion"])
+            escritor.writerow(["Orden", "Nombre", "Latitud", "Longitud"])
             for idx, p in enumerate(resultado["ruta_ordenada"]):
-                escritor.writerow([idx, p["nombre"], p["lat"], p["lng"], p.get("direccion", "")])
+                escritor.writerow([idx, p["nombre"], p["lat"], p["lng"]])
     except Exception as e:
         print(f"[CSV] Error guardando archivo: {e}")
 
-    # Obtener trazado OSRM real
+    # Trazado real por calles con OSRM
     trazado_calles = None
     try:
         import httpx
@@ -224,6 +249,6 @@ def calcular_ruta(peticion: PeticionRuta):
         "distancias":     resultado["distancias"],
         "clima":          clima_actual,
         "incidencias":    incidencias_activas,
-        "no_encontradas": no_encontradas,
+        "no_encontradas": [],
         "justificacion":  justificacion
     }

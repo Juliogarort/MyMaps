@@ -1,15 +1,3 @@
-"""
-sevilla/reglas.py
-
-Define las reglas que determinan el coste de ir de un punto a otro.
-Este coste es lo que usará el algoritmo TSP para encontrar la ruta óptima.
-
-Factores que afectan al coste:
-    - Distancia real entre dos puntos (fórmula Haversine)
-    - Incidencias de la DGT en la zona (accidentes, obras, cortes)
-    - Clima (lluvia o tormenta penaliza la ruta)
-"""
-
 import math
 
 

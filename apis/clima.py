@@ -1,11 +1,3 @@
-"""
-apis/clima.py
-
-Conecta con OpenWeatherMap y obtiene el clima actual de Sevilla.
-Usaremos estos datos como condición para el cálculo de rutas.
-Por ejemplo: si llueve, penalizamos ciertas rutas.
-"""
-
 import httpx
 import os
 from dotenv import load_dotenv

@@ -1,13 +1,3 @@
-"""
-apis/dgt.py
-
-Conecta con la API pública de la DGT y obtiene incidencias de tráfico
-en tiempo real para la provincia de Sevilla.
-
-URL: https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml
-Formato: XML DATEX II (estándar europeo de tráfico)
-Sin API key necesaria.
-"""
 from typing import Optional
 import httpx 
 from lxml import etree

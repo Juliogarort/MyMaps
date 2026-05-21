@@ -1,14 +1,3 @@
-"""
-apis/geocodificador.py
-
-Convierte direcciones o nombres de lugares en coordenadas
-usando Nominatim (OpenStreetMap). Sin API key necesaria.
-
-Limitado geográficamente a la provincia de Sevilla.
-Acepta tanto direcciones como nombres de lugares
-(ej: "Ilerna Sevilla", "Estadio Ramón Sánchez Pizjuán")
-"""
-
 import httpx
 import time
 
@@ -36,19 +25,7 @@ def _esta_en_sevilla(lat: float, lng: float) -> bool:
 
 
 def buscar_direccion(texto: str) -> list:
-    """
-    Busca una dirección o nombre de lugar en Sevilla.
-    Acepta direcciones postales y nombres de sitios conocidos.
 
-    Ejemplos válidos:
-        - "Calle Sierpes 10"
-        - "Plaza de España"
-        - "Ilerna Sevilla"
-        - "Hospital Virgen del Rocío"
-        - "Centro Comercial Los Arcos"
-
-    Devuelve lista de resultados dentro de la provincia de Sevilla.
-    """
     if "sevilla" not in texto.lower():
         texto_busqueda = f"{texto}, Sevilla"
     else:
@@ -90,10 +67,7 @@ def buscar_direccion(texto: str) -> list:
 
 
 def direccion_a_coordenadas(texto: str) -> dict | None:
-    """
-    Convierte una dirección o nombre de lugar a coordenadas.
-    Solo devuelve resultados dentro de la provincia de Sevilla.
-    """
+
     resultados = buscar_direccion(texto)
 
     if not resultados:
@@ -104,7 +78,7 @@ def direccion_a_coordenadas(texto: str) -> dict | None:
 
 
 def coordenadas_a_direccion(lat: float, lng: float) -> str | None:
-    """Convierte coordenadas a nombre de lugar/dirección en Sevilla."""
+
     try:
         respuesta = httpx.get(
             "https://nominatim.openstreetmap.org/reverse",

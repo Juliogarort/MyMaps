@@ -1,19 +1,3 @@
-"""
-calcular.py
-
-Script principal que une todo el sistema.
-
-Flujo:
-    1. El usuario indica cuántas paradas tiene
-    2. Introduce cada dirección una por una
-    3. Se obtienen datos reales de tráfico (DGT) y clima
-    4. El TSP calcula la ruta óptima
-    5. Se muestra el resultado y se exporta a CSV
-
-Uso:
-    python calcular.py
-"""
-
 import csv
 from datetime import datetime
 

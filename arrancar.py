@@ -1,13 +1,3 @@
-"""
-arrancar.py
-
-Arranca el backend y el frontend con un solo comando.
-Funciona en Mac y Windows automáticamente.
-
-Uso:
-    python arrancar.py
-"""
-
 import subprocess
 import sys
 import os
