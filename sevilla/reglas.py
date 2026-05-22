@@ -1,21 +1,9 @@
 import math
 
-
-# ── Distancia real ───────────────────────────────────────────
+# ── Distancia real (Haversine) ───────────────────────────────
 
 def calcular_distancia(punto1: dict, punto2: dict) -> float:
-    """
-    Calcula la distancia en km entre dos puntos usando Haversine.
-    Es la distancia en línea recta sobre la superficie terrestre.
-
-    Parámetros:
-        punto1, punto2: diccionarios con claves 'lat' y 'lng'
-
-    Devuelve:
-        Distancia en kilómetros
-    """
     R = 6371  # radio de la Tierra en km
-
     lat1 = math.radians(punto1["lat"])
     lat2 = math.radians(punto2["lat"])
     dlat = math.radians(punto2["lat"] - punto1["lat"])
@@ -27,22 +15,11 @@ def calcular_distancia(punto1: dict, punto2: dict) -> float:
 
 # ── Penalizaciones por incidencias ───────────────────────────
 
-def calcular_penalizacion_dgt(punto1: dict, punto2: dict, incidencias: list) -> float:
-    """
-    Calcula un factor de penalización según las incidencias de la DGT
-    que haya cerca del tramo entre punto1 y punto2.
+def calcular_penalizacion_incidencias(punto1: dict, punto2: dict, incidencias: list) -> float:
 
-    Lógica:
-        - Calculamos el punto medio del tramo
-        - Buscamos incidencias en un radio de 5km alrededor
-        - Cada incidencia suma penalización según su tipo y gravedad
-
-    Devuelve:
-        Factor multiplicador (1.0 = sin penalización, 2.0 = doble coste)
-    """
     penalizacion = 1.0
 
-    # Punto medio del tramo
+    # Punto medio del tramo de reparto
     medio = {
         "lat": (punto1["lat"] + punto2["lat"]) / 2,
         "lng": (punto1["lng"] + punto2["lng"]) / 2
@@ -51,23 +28,38 @@ def calcular_penalizacion_dgt(punto1: dict, punto2: dict, incidencias: list) -> 
     for incidencia in incidencias:
         punto_inc = {"lat": incidencia["lat"], "lng": incidencia["lng"]}
         distancia_a_incidencia = calcular_distancia(medio, punto_inc)
-
-        # Solo afecta si está a menos de 5km del tramo
-        if distancia_a_incidencia > 5:
-            continue
-
-        tipo     = incidencia.get("tipo", "otros")
+        
+        fuente = incidencia.get("fuente", "DGT")
+        tipo = incidencia.get("tipo", "otros")
         gravedad = incidencia.get("gravedad", 1)
 
-        # Reglas de penalización por tipo
-        if tipo == "accidente":
-            penalizacion += 0.3 * gravedad   # hasta +0.9
-        elif tipo == "obras":
-            penalizacion += 0.2 * gravedad   # hasta +0.6
-        elif tipo == "corte":
-            penalizacion += 1.0 * gravedad   # hasta +3.0 (casi bloquea)
-        elif tipo == "congestion":
-            penalizacion += 0.15 * gravedad  # hasta +0.45
+        if fuente == "OpenStreetMap":
+            # --- LÓGICA URBANA (Overpass) ---
+            # En ciudad, una calle cortada solo afecta si está muy cerca del tramo (ej: menos de 400 metros)
+            if distancia_a_incidencia > 0.4: 
+                continue
+                
+            if tipo == "corte":
+                penalizacion += 1.5 * gravedad   # Penaliza drásticamente para que el TSP busque otra calle
+            elif tipo == "obras":
+                penalizacion += 0.4 * gravedad   # Las obras urbanas ralentizan bastante
+            else:
+                penalizacion += 0.2 * gravedad
+
+        else:
+            # --- LÓGICA INTERURBANA (DGT) ---
+            # En autopistas/rondas (SE-30, A-4), el impacto se nota a kilómetros de distancia
+            if distancia_a_incidencia > 4.0:
+                continue
+
+            if tipo == "accidente":
+                penalizacion += 0.3 * gravedad
+            elif tipo == "obras":
+                penalizacion += 0.2 * gravedad
+            elif tipo == "corte":
+                penalizacion += 1.0 * gravedad
+            elif tipo == "congestion":
+                penalizacion += 0.15 * gravedad
 
     return penalizacion
 
@@ -75,16 +67,7 @@ def calcular_penalizacion_dgt(punto1: dict, punto2: dict, incidencias: list) -> 
 # ── Penalización por clima ───────────────────────────────────
 
 def calcular_penalizacion_clima(clima: dict) -> float:
-    """
-    Devuelve un factor de penalización según el clima actual.
-
-    Reglas:
-        - Tormenta: +50% al coste (conducción peligrosa)
-        - Lluvia:   +20% al coste (mayor tiempo de viaje)
-        - Normal:   sin penalización
-    """
     condicion = clima.get("condicion", "normal")
-
     if condicion == "tormenta":
         return 1.5
     elif condicion == "lluvia":
@@ -97,20 +80,10 @@ def calcular_penalizacion_clima(clima: dict) -> float:
 
 def calcular_coste(punto1: dict, punto2: dict, incidencias: list, clima: dict) -> float:
     """
-    Calcula el coste total de ir de punto1 a punto2.
-    Este es el valor que usará el TSP para optimizar la ruta.
-
-    Fórmula:
-        coste = distancia × penalización_dgt × penalización_clima
-
-    Ejemplo:
-        - Distancia: 5 km
-        - Obras graves cerca: ×1.6
-        - Lluvia: ×1.2
-        - Coste final: 5 × 1.6 × 1.2 = 9.6 (equivale a recorrer 9.6 km sin problemas)
+    Fórmula unificada que alimenta al algoritmo de OR-Tools.
     """
-    distancia         = calcular_distancia(punto1, punto2)
-    penalizacion_dgt  = calcular_penalizacion_dgt(punto1, punto2, incidencias)
+    distancia = calcular_distancia(punto1, punto2)
+    penalizacion_trafico = calcular_penalizacion_incidencias(punto1, punto2, incidencias)
     penalizacion_clima = calcular_penalizacion_clima(clima)
 
-    return distancia * penalizacion_dgt * penalizacion_clima
+    return distancia * penalizacion_trafico * penalizacion_clima

@@ -1,18 +1,3 @@
-"""
-api/servidor.py
-
-Servidor FastAPI que expone el sistema de rutas como API REST.
-
-Endpoints:
-    POST /ruta         → calcula la ruta óptima dado un conjunto de direcciones
-    GET  /incidencias  → devuelve incidencias activas en Sevilla
-    GET  /clima        → devuelve el clima actual en Sevilla
-    GET  /estado       → verifica que el servidor está activo
-
-Uso:
-    uvicorn api.servidor:app --reload
-"""
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -23,8 +8,7 @@ from apis.dgt import obtener_incidencias_sevilla
 from apis.overpass import obtener_incidencias_overpass
 from apis.clima import obtener_clima_sevilla
 from sevilla.tsp import calcular_ruta_optima
-from sevilla.reglas import calcular_distancia, calcular_penalizacion_dgt, calcular_penalizacion_clima
-
+from sevilla.reglas import calcular_distancia, calcular_penalizacion_incidencias, calcular_penalizacion_clima
 app = FastAPI(
     title="MyMaps API",
     description="Sistema de optimización de rutas de reparto en Sevilla",
@@ -69,76 +53,92 @@ def obtener_todas_incidencias() -> list:
 # ── Justificación en lenguaje humano ─────────────────────────
 
 def generar_justificacion(ruta: list, incidencias: list, clima: dict) -> str:
-    """
-    Genera un mensaje simple y entendible explicando las decisiones de la ruta.
-    """
     mensajes = []
-    factor_clima = calcular_penalizacion_clima(clima)
-
-    # Mensaje sobre el clima
     condicion = clima.get("condicion", "normal")
-    if condicion == "tormenta":
-        mensajes.append(f"⛈️ Hay tormenta en Sevilla. Se ha aumentado la precaución en todos los tramos.")
-    elif condicion == "lluvia":
-        mensajes.append(f"🌧️ Está lloviendo en Sevilla. Se ha tenido en cuenta para el cálculo.")
+    temp      = clima.get("temperatura", "")
 
-    # Analizar cada tramo de la ruta
-    tramos_con_incidencias = []
+    # ── Clima ────────────────────────────────────────────────
+    if condicion == "tormenta":
+        mensajes.append(f"⛈️ Hay tormenta en Sevilla ({temp}°C). "
+                        f"Se ha aumentado la precaución en toda la ruta.")
+    elif condicion == "lluvia":
+        mensajes.append(f"🌧️ Está lloviendo en Sevilla ({temp}°C). "
+                        f"Los tiempos de viaje pueden ser algo mayores.")
+    else:
+        mensajes.append(f"☀️ Buen tiempo en Sevilla ({temp}°C). "
+                        f"El clima no afecta al cálculo de la ruta.")
+
+    # ── Incidencias por tramo ────────────────────────────────
+    tramos_afectados = []
+    tramos_limpios   = 0
+
     for i in range(len(ruta) - 1):
         p1, p2 = ruta[i], ruta[i + 1]
-        penalizacion = calcular_penalizacion_dgt(p1, p2, incidencias)
+        penalizacion = calcular_penalizacion_incidencias(p1, p2, incidencias)
 
-        if penalizacion > 1.0:
-            # Buscar qué incidencias afectan a este tramo
-            medio = {
-                "lat": (p1["lat"] + p2["lat"]) / 2,
-                "lng": (p1["lng"] + p2["lng"]) / 2
-            }
-            incidencias_cercanas = []
-            for inc in incidencias:
-                punto_inc = {"lat": inc["lat"], "lng": inc["lng"]}
-                if calcular_distancia(medio, punto_inc) < 5:
-                    incidencias_cercanas.append(inc)
+        if penalizacion <= 1.0:
+            tramos_limpios += 1
+            continue
 
-            if incidencias_cercanas:
-                nombres_paradas = f"{p1['nombre']} y {p2['nombre']}"
-                tipos = list(set([inc.get("tipo", "incidencia") for inc in incidencias_cercanas]))
-                tipo_texto = _tipo_a_texto(tipos[0]) if tipos else "una incidencia"
-                carretera = incidencias_cercanas[0].get("carretera", "")
-                if carretera and carretera != "Calle sin nombre":
-                    tramos_con_incidencias.append(
-                        f"⚠️ Entre {nombres_paradas} se detectó {tipo_texto} en {carretera}. "
-                        f"Se ajustó el coste del tramo para optimizar la ruta."
-                    )
-                else:
-                    tramos_con_incidencias.append(
-                        f"⚠️ Entre {nombres_paradas} se detectó {tipo_texto}. "
-                        f"Se ajustó el coste del tramo para optimizar la ruta."
-                    )
+        # Buscar la incidencia más cercana al tramo
+        medio = {
+            "lat": (p1["lat"] + p2["lat"]) / 2,
+            "lng": (p1["lng"] + p2["lng"]) / 2
+        }
+        inc_cercana = None
+        min_dist    = float("inf")
+        for inc in incidencias:
+            d = calcular_distancia(medio, {"lat": inc["lat"], "lng": inc["lng"]})
+            if d < min_dist:
+                min_dist    = d
+                inc_cercana = inc
 
-    if tramos_con_incidencias:
-        mensajes.extend(tramos_con_incidencias)
+        if inc_cercana:
+            tipo_texto = _tipo_a_texto(inc_cercana.get("tipo", "otros"))
+            carretera  = inc_cercana.get("carretera", "")
+            nombre1    = p1["nombre"]
+            nombre2    = p2["nombre"]
+
+            if carretera and carretera not in ("Calle urbana", "Calle sin nombre"):
+                tramos_afectados.append(
+                    f"⚠️ Hay {tipo_texto} en {carretera} "
+                    f"(tramo {nombre1} → {nombre2}). "
+                    f"La ruta lo tiene en cuenta."
+                )
+            else:
+                tramos_afectados.append(
+                    f"⚠️ Hay {tipo_texto} cerca del tramo "
+                    f"{nombre1} → {nombre2}. "
+                    f"La ruta lo tiene en cuenta."
+                )
+        else:
+            tramos_limpios += 1
+
+    if tramos_afectados:
+        mensajes.extend(tramos_afectados)
     else:
-        mensajes.append("✅ No se detectaron incidencias en ningún tramo de la ruta.")
+        mensajes.append("✅ No hay incidencias en ningún tramo. "
+                        "La ruta se calculó por distancia mínima.")
 
-    # Mensaje final con el orden elegido
-    nombres_orden = " → ".join([p["nombre"] for p in ruta])
-    mensajes.append(f"🗺️ Orden óptimo calculado: {nombres_orden}")
+    # ── Resumen final ────────────────────────────────────────
+    paradas_intermedias = [p["nombre"] for p in ruta[1:-1]]
+    if len(paradas_intermedias) == 1:
+        mensajes.append(f"🗺️ Única parada: {paradas_intermedias[0]}.")
+    elif len(paradas_intermedias) > 1:
+        orden = " → ".join(paradas_intermedias)
+        mensajes.append(f"🗺️ Orden óptimo de entregas: {orden}.")
 
     return "\n".join(mensajes)
 
 
 def _tipo_a_texto(tipo: str) -> str:
-    """Convierte el tipo de incidencia a texto legible."""
-    textos = {
+    return {
         "obras":      "obras en la vía",
-        "accidente":  "un accidente",
-        "corte":      "un corte de tráfico",
+        "accidente":  "un accidente de tráfico",
+        "corte":      "un corte de carretera",
         "congestion": "congestión de tráfico",
         "otros":      "una incidencia de tráfico"
-    }
-    return textos.get(tipo, "una incidencia")
-
+    }.get(tipo, "una incidencia")
 
 # ── Endpoints ────────────────────────────────────────────────
 

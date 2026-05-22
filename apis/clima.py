@@ -13,16 +13,7 @@ LNG_SEVILLA = -5.9845
 
 
 def obtener_clima_sevilla() -> dict:
-    """
-    Devuelve el clima actual de Sevilla en un formato simple.
 
-    Retorna un diccionario con:
-        - descripcion: texto del clima (ej: "lluvia ligera")
-        - temperatura: en grados Celsius
-        - lluvia: True o False
-        - viento_kmh: velocidad del viento
-        - condicion: "normal", "lluvia" o "tormenta"
-    """
     if not API_KEY:
         print("[Clima] ⚠️  Sin API key. Añádela al .env como OPENWEATHER_API_KEY")
         return _clima_simulado()
